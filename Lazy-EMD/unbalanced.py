@@ -2,7 +2,6 @@
 from __future__ import division
 import warnings
 import numpy as np
-import cupy as cp
 from scipy.special import logsumexp
 
 def sinkhorn_unbalanced(a, b, M, reg, reg_m1, reg_m2, method='sinkhorn', numItermax=1e5,
@@ -132,6 +131,130 @@ def sinkhorn_unbalanced(a, b, M, reg, reg_m1, reg_m2, method='sinkhorn', numIter
                                          log=log, **kwargs)
     else:
         raise ValueError("Unknown method '%s'." % method)
+
+
+def sinkhorn_unbalanced2(a, b, M, reg, reg_m1, reg_m2, method='sinkhorn',
+                         numItermax=1e5, stopThr=1e-6, verbose=False,
+                         log=False, **kwargs):
+    r"""
+    Solve the entropic regularization unbalanced optimal transport problem and
+    return the loss
+
+    The function solves the following optimization problem:
+
+    .. math::
+        W = \min_\gamma <\gamma,M>_F + reg\cdot\Omega(\gamma) + reg_m1 KL(\gamma 1, a) + reg_m2 KL(\gamma^T 1, b)
+
+        s.t.
+             \gamma\geq 0
+    where :
+
+    - M is the (dim_a, dim_b) metric cost matrix
+    - :math:`\Omega` is the entropic regularization term
+        :math:`\Omega(\gamma)=\sum_{i,j} \gamma_{i,j}\log(\gamma_{i,j})`
+    - a and b are source and target unbalanced distributions
+    - KL is the Kullback-Leibler divergence
+
+    The algorithm used for solving the problem is the generalized
+    Sinkhorn-Knopp matrix scaling algorithm as proposed in [10, 23]_
+
+
+    Parameters
+    ----------
+    a : np.ndarray (dim_a,)
+        Unnormalized histogram of dimension dim_a
+    b : np.ndarray (dim_b,) or np.ndarray (dim_b, n_hists)
+        One or multiple unnormalized histograms of dimension dim_b
+        If many, compute all the OT distances (a, b_i)
+    M : np.ndarray (dim_a, dim_b)
+        loss matrix
+    reg : float
+        Entropy regularization term > 0
+    reg_m1: float
+        Marginal relaxation term > 0
+    reg_m2: float
+        Marginal relaxation term > 0
+    method : str
+        method used for the solver either 'sinkhorn',  'sinkhorn_stabilized' or
+        'sinkhorn_reg_scaling', see those function for specific parameters
+    numItermax : int, optional
+        Max number of iterations
+    stopThr : float, optional
+        Stop threshol on error (>0)
+    verbose : bool, optional
+        Print information along iterations
+    log : bool, optional
+        record log if True
+
+
+    Returns
+    -------
+    ot_distance : (n_hists,) ndarray
+        the OT distance between `a` and each of the histograms `b_i`
+    log : dict
+        log dictionary returned only if `log` is `True`
+
+    Examples
+    --------
+
+    >>> import ot
+    >>> a=[.5, .10]
+    >>> b=[.5, .5]
+    >>> M=[[0., 1.],[1., 0.]]
+    >>> ot.unbalanced.sinkhorn_unbalanced2(a, b, M, 1., 1.)
+    array([0.31912866])
+
+
+
+    References
+    ----------
+
+    .. [2] M. Cuturi, Sinkhorn Distances : Lightspeed Computation of Optimal
+        Transport, Advances in Neural Information Processing Systems
+        (NIPS) 26, 2013
+
+    .. [9] Schmitzer, B. (2016). Stabilized Sparse Scaling Algorithms for
+        Entropy Regularized Transport Problems. arXiv preprint arXiv:1610.06519.
+
+    .. [10] Chizat, L., Peyré, G., Schmitzer, B., & Vialard, F. X. (2016).
+        Scaling algorithms for unbalanced transport problems. arXiv preprint
+        arXiv:1607.05816.
+
+    .. [25] Frogner C., Zhang C., Mobahi H., Araya-Polo M., Poggio T. :
+        Learning with a Wasserstein Loss,  Advances in Neural Information
+        Processing Systems (NIPS) 2015
+
+    See Also
+    --------
+    ot.unbalanced.sinkhorn_knopp : Unbalanced Classic Sinkhorn [10]
+    ot.unbalanced.sinkhorn_stabilized: Unbalanced Stabilized sinkhorn [9][10]
+    ot.unbalanced.sinkhorn_reg_scaling: Unbalanced Sinkhorn with epslilon scaling [9][10]
+
+    """
+    b = np.asarray(b, dtype=np.float64)
+    if len(b.shape) < 2:
+        b = b[:, None]
+    if method.lower() == 'sinkhorn':
+        return sinkhorn_knopp_unbalanced(a, b, M, reg, reg_m1, reg_m2,
+                                         numItermax=numItermax,
+                                         stopThr=stopThr, verbose=verbose,
+                                         log=log, **kwargs)
+
+    elif method.lower() == 'sinkhorn_stabilized':
+        return sinkhorn_stabilized_unbalanced(a, b, M, reg, reg_m1,
+                                              numItermax=numItermax,
+                                              stopThr=stopThr,
+                                              verbose=verbose,
+                                              log=log, **kwargs)
+    elif method.lower() in ['sinkhorn_reg_scaling']:
+        # warnings.warn('Method not implemented yet. Using classic Sinkhorn Knopp')
+        return sinkhorn_knopp_reg_scaling(a, b, M, reg_m1, reg_m2,
+                                         numItermax=numItermax,
+                                         stopThr=stopThr, verbose=verbose,
+                                         log=log, **kwargs)
+    else:
+        raise ValueError('Unknown method %s.' % method)
+
 
 def sinkhorn_knopp_unbalanced(a, b, M, reg, reg_m1, reg_m2, numItermax=1e6,
                               stopThr=1e-6, verbose=False, log=False, **kwargs):
@@ -317,6 +440,7 @@ def sinkhorn_knopp_unbalanced(a, b, M, reg, reg_m1, reg_m2, numItermax=1e6,
             return u[:, None] * K * v[None, :], log
         else:
             return np.multiply(u[:, None] * K * v[None, :], Mask)
+
 
 def sinkhorn_stabilized_unbalanced(a, b, M, reg, reg_m, tau=1e5, numItermax=1000,
                                    stopThr=1e-6, verbose=False, log=False,
@@ -531,6 +655,7 @@ def sinkhorn_stabilized_unbalanced(a, b, M, reg, reg_m, tau=1e5, numItermax=1000
         else:
             return ot_matrix
 
+
 def sinkhorn_knopp_reg_scaling(a, b, M, reg_m1, reg_m2, reg_0=0.01, reg_end=0.001, reg_step=0.5, 
                                numItermax=1e5, stopThr=1e-6, verbose=False, log=False, **kwargs):
     a = np.asarray(a, dtype=np.float64)
@@ -632,19 +757,44 @@ def sinkhorn_knopp_reg_scaling(a, b, M, reg_m1, reg_m2, reg_0=0.01, reg_end=0.00
         else:
             return u[:, None] * K * v[None, :]
 
-def sinkhorn_knopp_unbalanced_batch(a, b, M, reg, reg_m1, reg_m2, numItermax=1e4,
-                              stopThr=1e-6, verbose=False, **kwargs):
-    r"""
-    Solve the entropic regularization unbalanced optimal transport problem and return the transport loss
+
+def barycenter_unbalanced_stabilized(A, M, reg, reg_m, weights=None, tau=1e3,
+                                     numItermax=1000, stopThr=1e-6,
+                                     verbose=False, log=False):
+    r"""Compute the entropic unbalanced wasserstein barycenter of A with stabilization.
+
+     The function solves the following optimization problem:
+
+    .. math::
+       \mathbf{a} = arg\min_\mathbf{a} \sum_i Wu_{reg}(\mathbf{a},\mathbf{a}_i)
+
+    where :
+
+    - :math:`Wu_{reg}(\cdot,\cdot)` is the unbalanced entropic regularized
+        Wasserstein distance (see ot.unbalanced.sinkhorn_unbalanced)
+    - :math:`\mathbf{a}_i` are training distributions in the columns of
+        matrix :math:`\mathbf{A}`
+    - reg and :math:`\mathbf{M}` are respectively the regularization term and
+        the cost matrix for OT
+    - reg_mis the marginal relaxation hyperparameter
+        The algorithm used for solving the problem is the generalized
+        Sinkhorn-Knopp matrix scaling algorithm as proposed in [10]_
 
     Parameters
     ----------
-    a : cp.ndarray (batch_size, dim_a)
-        Multiple unnormalized histograms of dimension dim_a
-    b : cp.ndarray (batch_size, dim_b) or np.ndarray (batch_size, dim_b)
-        Multiple unnormalized histograms of dimension dim_b
-    M : cp.ndarray (batch_size, dim_a, dim_b)
-        loss matrix
+    A : np.ndarray (dim, n_hists)
+        `n_hists` training distributions a_i of dimension dim
+    M : np.ndarray (dim, dim)
+        ground metric matrix for OT.
+    reg : float
+        Entropy regularization term > 0
+    reg_m : float
+        Marginal relaxation term > 0
+    tau : float
+        Stabilization threshold for log domain absorption.
+    weights : np.ndarray (n_hists,) optional
+        Weight of each distribution (barycentric coodinates)
+        If None, uniform weights are used.
     numItermax : int, optional
         Max number of iterations
     stopThr : float, optional
@@ -654,67 +804,325 @@ def sinkhorn_knopp_unbalanced_batch(a, b, M, reg, reg_m1, reg_m2, numItermax=1e4
     log : bool, optional
         record log if True
 
+
     Returns
     -------
-    loss : cp.ndarray (batch_size, )
+    a : (dim,) ndarray
+        Unbalanced Wasserstein barycenter
+    log : dict
+        log dictionary return only if log==True in parameters
+
+
+    References
+    ----------
+
+    .. [3] Benamou, J. D., Carlier, G., Cuturi, M., Nenna, L., & Peyré,
+        G. (2015). Iterative Bregman projections for regularized transportation
+        problems. SIAM Journal on Scientific Computing, 37(2), A1111-A1138.
+    .. [10] Chizat, L., Peyré, G., Schmitzer, B., & Vialard, F. X. (2016).
+        Scaling algorithms for unbalanced transport problems. arXiv preprint
+        arXiv:1607.05816.
+
 
     """
+    dim, n_hists = A.shape
+    if weights is None:
+        weights = np.ones(n_hists) / n_hists
+    else:
+        assert(len(weights) == A.shape[1])
 
-    a = cp.asarray(a, dtype=cp.float64)
-    b = cp.asarray(b, dtype=cp.float64)
-    M = cp.asarray(M, dtype=cp.float64)
+    if log:
+        log = {'err': []}
 
-    batch_size, dim_a, dim_b = M.shape
-    a = a.reshape((batch_size, dim_a, 1))
-    b = b.reshape((batch_size, dim_b, 1))
+    fi = reg_m / (reg_m + reg)
 
-    if len(a) == 0:
-        a = None
-    if len(b) == 0:
-        b = cp.ones(b.shape, dtype=cp.float64) / dim_b
+    u = np.ones((dim, n_hists)) / dim
+    v = np.ones((dim, n_hists)) / dim
 
-    # we assume that no distances are null except those of the diagonal of
-    # distances
-    u = cp.divide(cp.ones((batch_size, dim_a, 1)), dim_a)
-    v = cp.divide(cp.ones((batch_size, dim_b, 1)), dim_b)
-
+    # print(reg)
     # Next 3 lines equivalent to K= np.exp(-M/reg), but faster to compute
-    K = cp.empty(M.shape, dtype=M.dtype)
-    cp.divide(M, -reg, out=K)
-    cp.exp(K, out=K)
+    K = np.empty(M.shape, dtype=M.dtype)
+    np.divide(M, -reg, out=K)
+    np.exp(K, out=K)
 
-    fi1 = reg_m1 / (reg_m1 + reg)
-    fi2 = reg_m2 / (reg_m2 + reg)
+    fi = reg_m / (reg_m + reg)
+
+    cpt = 0
+    err = 1.
+    alpha = np.zeros(dim)
+    beta = np.zeros(dim)
+    q = np.ones(dim) / dim
+    while (err > stopThr and cpt < numItermax):
+        qprev = q
+        Kv = K.dot(v)
+        f_alpha = np.exp(- alpha / (reg + reg_m))
+        f_beta = np.exp(- beta / (reg + reg_m))
+        f_alpha = f_alpha[:, None]
+        f_beta = f_beta[:, None]
+        u = ((A / (Kv + 1e-16)) ** fi) * f_alpha
+        Ktu = K.T.dot(u)
+        q = (Ktu ** (1 - fi)) * f_beta
+        q = q.dot(weights) ** (1 / (1 - fi))
+        Q = q[:, None]
+        v = ((Q / (Ktu + 1e-16)) ** fi) * f_beta
+        absorbing = False
+        if (u > tau).any() or (v > tau).any():
+            absorbing = True
+            alpha = alpha + reg * np.log(np.max(u, 1))
+            beta = beta + reg * np.log(np.max(v, 1))
+            K = np.exp((alpha[:, None] + beta[None, :] -
+                        M) / reg)
+            v = np.ones_like(v)
+        Kv = K.dot(v)
+        if (np.any(Ktu == 0.)
+                or np.any(np.isnan(u)) or np.any(np.isnan(v))
+                or np.any(np.isinf(u)) or np.any(np.isinf(v))):
+            # we have reached the machine precision
+            # come back to previous solution and quit loop
+            warnings.warn('Numerical errors at iteration %s' % cpt)
+            q = qprev
+            break
+        if (cpt % 10 == 0 and not absorbing) or cpt == 0:
+            # we can speed up the process by checking for the error only all
+            # the 10th iterations
+            err = abs(q - qprev).max() / max(abs(q).max(),
+                                             abs(qprev).max(), 1.)
+            if log:
+                log['err'].append(err)
+            if verbose:
+                if cpt % 50 == 0:
+                    print(
+                        '{:5s}|{:12s}'.format('It.', 'Err') + '\n' + '-' * 19)
+                print('{:5d}|{:8e}|'.format(cpt, err))
+
+        cpt += 1
+    if err > stopThr:
+        warnings.warn("Stabilized Unbalanced Sinkhorn did not converge." +
+                      "Try a larger entropy `reg` or a lower mass `reg_m`." +
+                      "Or a larger absorption threshold `tau`.")
+    if log:
+        log['niter'] = cpt
+        log['logu'] = np.log(u + 1e-16)
+        log['logv'] = np.log(v + 1e-16)
+        return q, log
+    else:
+        return q
+
+
+def barycenter_unbalanced_sinkhorn(A, M, reg, reg_m, weights=None,
+                                   numItermax=1000, stopThr=1e-6,
+                                   verbose=False, log=False):
+    r"""Compute the entropic unbalanced wasserstein barycenter of A.
+
+     The function solves the following optimization problem with a
+
+    .. math::
+       \mathbf{a} = arg\min_\mathbf{a} \sum_i Wu_{reg}(\mathbf{a},\mathbf{a}_i)
+
+    where :
+
+    - :math:`Wu_{reg}(\cdot,\cdot)` is the unbalanced entropic regularized
+    Wasserstein distance (see ot.unbalanced.sinkhorn_unbalanced)
+    - :math:`\mathbf{a}_i` are training distributions in the columns of matrix
+    :math:`\mathbf{A}`
+    - reg and :math:`\mathbf{M}` are respectively the regularization term and
+    the cost matrix for OT
+    - reg_mis the marginal relaxation hyperparameter
+    The algorithm used for solving the problem is the generalized
+    Sinkhorn-Knopp matrix scaling algorithm as proposed in [10]_
+
+    Parameters
+    ----------
+    A : np.ndarray (dim, n_hists)
+        `n_hists` training distributions a_i of dimension dim
+    M : np.ndarray (dim, dim)
+        ground metric matrix for OT.
+    reg : float
+        Entropy regularization term > 0
+    reg_m: float
+        Marginal relaxation term > 0
+    weights : np.ndarray (n_hists,) optional
+        Weight of each distribution (barycentric coodinates)
+        If None, uniform weights are used.
+    numItermax : int, optional
+        Max number of iterations
+    stopThr : float, optional
+        Stop threshol on error (> 0)
+    verbose : bool, optional
+        Print information along iterations
+    log : bool, optional
+        record log if True
+
+
+    Returns
+    -------
+    a : (dim,) ndarray
+        Unbalanced Wasserstein barycenter
+    log : dict
+        log dictionary return only if log==True in parameters
+
+
+    References
+    ----------
+
+    .. [3] Benamou, J. D., Carlier, G., Cuturi, M., Nenna, L., & Peyré, G.
+        (2015). Iterative Bregman projections for regularized transportation
+        problems. SIAM Journal on Scientific Computing, 37(2), A1111-A1138.
+    .. [10] Chizat, L., Peyré, G., Schmitzer, B., & Vialard, F. X. (2016).
+        Scaling algorithms for unbalanced transport problems. arXiv preprin
+        arXiv:1607.05816.
+
+
+    """
+    dim, n_hists = A.shape
+    if weights is None:
+        weights = np.ones(n_hists) / n_hists
+    else:
+        assert(len(weights) == A.shape[1])
+
+    if log:
+        log = {'err': []}
+
+    K = np.exp(- M / reg)
+
+    fi = reg_m / (reg_m + reg)
+
+    v = np.ones((dim, n_hists)) / dim
+    u = np.ones((dim, 1)) / dim
 
     cpt = 0
     err = 1.
 
-    while (np.any(err > stopThr) and cpt < numItermax):
-        for i in np.arange(10):
-            uprev = u
-            vprev = v
+    while (err > stopThr and cpt < numItermax):
+        uprev = u
+        vprev = v
 
-            Kv = cp.matmul(K, v)
-            u = cp.power(cp.divide(a, Kv), fi1)
-            Ktu = cp.matmul(K.transpose(0,2,1), u)
-            v = cp.power(cp.divide(b, Ktu), fi2)
-        cpt += 10
+        Kv = K.dot(v)
+        u = (A / Kv) ** fi
+        Ktu = K.T.dot(u)
+        q = ((Ktu ** (1 - fi)).dot(weights))
+        q = q ** (1 / (1 - fi))
+        Q = q[:, None]
+        v = (Q / Ktu) ** fi
 
-        if (cp.any(Ktu == 0.)
-                or cp.any(cp.isnan(u)) or cp.any(cp.isnan(v))
-                or cp.any(cp.isinf(u)) or cp.any(cp.isinf(v))):
+        if (np.any(Ktu == 0.)
+                or np.any(np.isnan(u)) or np.any(np.isnan(v))
+                or np.any(np.isinf(u)) or np.any(np.isinf(v))):
             # we have reached the machine precision
             # come back to previous solution and quit loop
             warnings.warn('Numerical errors at iteration %s' % cpt)
             u = uprev
             v = vprev
             break
+        if cpt % 10 == 0:
+            # we can speed up the process by checking for the error only all
+            # the 10th iterations
+            err_u = abs(u - uprev).max()
+            err_u /= max(abs(u).max(), abs(uprev).max(), 1.)
+            err_v = abs(v - vprev).max()
+            err_v /= max(abs(v).max(), abs(vprev).max(), 1.)
+            err = 0.5 * (err_u + err_v)
+            if log:
+                log['err'].append(err)
+            if verbose:
+                if cpt % 50 == 0:
+                    print(
+                        '{:5s}|{:12s}'.format('It.', 'Err') + '\n' + '-' * 19)
+                print('{:5d}|{:8e}|'.format(cpt, err))
 
-        err_u = cp.divide(cp.abs(u - uprev).max(axis=1), cp.maximum(cp.maximum(cp.abs(u).max(1), cp.abs(uprev).max(1)), 1.))
-        err_v = cp.divide(cp.abs(v - vprev).max(1), cp.maximum(cp.maximum(cp.abs(v).max(1), cp.abs(vprev).max(1)), 1.))
-        err = 0.5 * (err_u + err_v)
+    cpt += 1
+    if log:
+        log['niter'] = cpt
+        log['logu'] = np.log(u + 1e-16)
+        log['logv'] = np.log(v + 1e-16)
+        return q, log
+    else:
+        return q
 
-    if np.any(err > stopThr):
-        print("May be not convergent.")
 
-    return cp.sum((u * K * v.transpose(0,2,1)) * M, axis=(1,2))
+def barycenter_unbalanced(A, M, reg, reg_m, method="sinkhorn", weights=None,
+                          numItermax=1000, stopThr=1e-6,
+                          verbose=False, log=False, **kwargs):
+    r"""Compute the entropic unbalanced wasserstein barycenter of A.
+
+     The function solves the following optimization problem with a
+
+    .. math::
+       \mathbf{a} = arg\min_\mathbf{a} \sum_i Wu_{reg}(\mathbf{a},\mathbf{a}_i)
+
+    where :
+
+    - :math:`Wu_{reg}(\cdot,\cdot)` is the unbalanced entropic regularized
+    Wasserstein distance (see ot.unbalanced.sinkhorn_unbalanced)
+    - :math:`\mathbf{a}_i` are training distributions in the columns of matrix
+    :math:`\mathbf{A}`
+    - reg and :math:`\mathbf{M}` are respectively the regularization term and
+    the cost matrix for OT
+    - reg_mis the marginal relaxation hyperparameter
+    The algorithm used for solving the problem is the generalized
+    Sinkhorn-Knopp matrix scaling algorithm as proposed in [10]_
+
+    Parameters
+    ----------
+    A : np.ndarray (dim, n_hists)
+        `n_hists` training distributions a_i of dimension dim
+    M : np.ndarray (dim, dim)
+        ground metric matrix for OT.
+    reg : float
+        Entropy regularization term > 0
+    reg_m: float
+        Marginal relaxation term > 0
+    weights : np.ndarray (n_hists,) optional
+        Weight of each distribution (barycentric coodinates)
+        If None, uniform weights are used.
+    numItermax : int, optional
+        Max number of iterations
+    stopThr : float, optional
+        Stop threshol on error (> 0)
+    verbose : bool, optional
+        Print information along iterations
+    log : bool, optional
+        record log if True
+
+
+    Returns
+    -------
+    a : (dim,) ndarray
+        Unbalanced Wasserstein barycenter
+    log : dict
+        log dictionary return only if log==True in parameters
+
+
+    References
+    ----------
+
+    .. [3] Benamou, J. D., Carlier, G., Cuturi, M., Nenna, L., & Peyré, G.
+        (2015). Iterative Bregman projections for regularized transportation
+        problems. SIAM Journal on Scientific Computing, 37(2), A1111-A1138.
+    .. [10] Chizat, L., Peyré, G., Schmitzer, B., & Vialard, F. X. (2016).
+        Scaling algorithms for unbalanced transport problems. arXiv preprin
+        arXiv:1607.05816.
+
+    """
+
+    if method.lower() == 'sinkhorn':
+        return barycenter_unbalanced_sinkhorn(A, M, reg, reg_m,
+                                              numItermax=numItermax,
+                                              stopThr=stopThr, verbose=verbose,
+                                              log=log, **kwargs)
+
+    elif method.lower() == 'sinkhorn_stabilized':
+        return barycenter_unbalanced_stabilized(A, M, reg, reg_m,
+                                                numItermax=numItermax,
+                                                stopThr=stopThr,
+                                                verbose=verbose,
+                                                log=log, **kwargs)
+    elif method.lower() in ['sinkhorn_reg_scaling']:
+        warnings.warn('Method not implemented yet. Using classic Sinkhorn Knopp')
+        return barycenter_unbalanced(A, M, reg, reg_m,
+                                     numItermax=numItermax,
+                                     stopThr=stopThr, verbose=verbose,
+                                     log=log, **kwargs)
+    else:
+        raise ValueError("Unknown method '%s'." % method)
+
