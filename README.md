@@ -10,5 +10,23 @@ This repository contains a primary implementation of the Lazy Earth Mover's Dist
 The simplest way is to copy `score.py` and `utils.py` to your `bert_score` file, `unbalanced.py` to your `ot` file.
 The usage is then similar to BERTScore. See `example.py` for an example.
 
+If you find this repo useful, please cite:
+```
+@inproceedings{ijcai2020-516,
+  title     = {Evaluating Natural Language Generation via Unbalanced Optimal Transport},
+  author    = {Chen, Yimeng and Lan, Yanyan and Xiong, Ruinbin and Pang, Liang and Ma, Zhiming and Cheng, Xueqi},
+  booktitle = {Proceedings of the Twenty-Ninth International Joint Conference on
+               Artificial Intelligence, {IJCAI-20}},
+  publisher = {International Joint Conferences on Artificial Intelligence Organization},             
+  editor    = {Christian Bessiere}	
+  pages     = {3730--3736},
+  year      = {2020},
+  month     = {7},
+  note      = {Main track}
+  doi       = {10.24963/ijcai.2020/516},
+  url       = {https://doi.org/10.24963/ijcai.2020/516},
+}
+```
+
 ## Acknowledgement
 This repo benefits a lot from [BERTScore](https://github.com/Tiiiger/bert_score) and [POT](https://github.com/PythonOT/POT).
