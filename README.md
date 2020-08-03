@@ -12,11 +12,10 @@ The usage is then similar to BERTScore. See `example.py` for an example.
 
 If you find this repo useful, please cite:
 ```
-@inproceedings{ijcai2020-516,
+@inproceedings{lazy-emd,
   title     = {Evaluating Natural Language Generation via Unbalanced Optimal Transport},
-  author    = {Chen, Yimeng and Lan, Yanyan and Xiong, Ruinbin and Pang, Liang and Ma, Zhiming and Cheng, Xueqi},
-  booktitle = {Proceedings of the Twenty-Ninth International Joint Conference on
-               Artificial Intelligence, {IJCAI-20}},
+  author    = {Chen, Yimeng and Lan, Yanyan and Xiong, Ruibin and Pang, Liang and Ma, Zhiming and Cheng, Xueqi},
+  booktitle = {Proceedings of the Twenty-Ninth International Joint Conference on Artificial Intelligence, {IJCAI-20}},
   publisher = {International Joint Conferences on Artificial Intelligence Organization},             
   editor    = {Christian Bessiere}	
   pages     = {3730--3736},
