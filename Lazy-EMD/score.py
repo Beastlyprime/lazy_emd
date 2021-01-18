@@ -1,188 +1,148 @@
-import time
+# export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/home/chenyimeng/anaconda3/lib/
+# from overrides import overrides
+from typing import List
+from transformers import AutoTokenizer
 import torch
-import matplotlib.pyplot as plt
+import bert_score
+from bert_score.utils import (
+    get_model,
+    get_idf_dict,
+    bert_cos_score_idf,
+    get_bert_embedding,
+    lang2model,
+    model2layers,
+    get_hash,
+    cache_scibert,
+    sent_encode,
+    bert_encode
+)
+import ot
+import unbalanced
+
 import numpy as np
 
-from collections import defaultdict
-from transformers import AutoTokenizer
+def get_weight_mat(indexes, col):
+    mat = np.zeros((len(indexes), col))
+    for ind, i in enumerate(indexes):
+        mat[ind, i] = 1
+    return mat
 
-from .utils import (get_model, get_idf_dict, bert_cos_score_idf,
-                    get_bert_embedding, model_types,
-                    lang2model, model2layers, get_hash,
-                    cache_scibert, sent_encode)
+def make_normal(array):
+    array_len = sum(array > 0)
+    array[array_len] -= sum(array) - 1.
+    return array
+
+def get_uniform_weight(length):
+    w = np.zeros(length)
+    w[1:-1] = 1.
+    w = w / w.sum()
+    return make_normal(w)
 
 
-__all__ = ['score', 'plot_example']
-
-def score(cands, refs, epsilon=0.009, reg1=0.23, reg2=0.31, model_type=None, num_layers=None, verbose=False,
-          idf=False, batch_size=64, nthreads=4, all_layers=False, lang=None,
-          return_hash=False, lemd=False):
+class Scorer:
     """
-    BERTScore metric.
-
-    Args:
-        - :param: `cands` (list of str): candidate sentences
-        - :param: `refs` (list of str): reference sentences
-        - :param: `model_type` (str): bert specification, default using the suggested
-                  model for the target langauge; has to specify at least one of
-                  `model_type` or `lang`
-        - :param: `num_layers` (int): the layer of representation to use.
-                  default using the number of layer tuned on WMT16 correlation data
-        - :param: `verbose` (bool): turn on intermediate status update
-        - :param: `idf` (bool or dict): use idf weighting, can also be a precomputed idf_dict
-        - :param: `batch_size` (int): bert score processing batch size
-        - :param: `lang` (str): language of the sentences; has to specify 
-                  at least one of `model_type` or `lang`
-        - :param: `return_hash` (bool): return hash code of the setting
-        - :param: `lemd` (bool): whether to use unbalanced OT
-        - :param: `epsilon` (float): Entropy regularization parameter
-        - :param: `reg1` (float): Margin relaxation parameter 1
-        - :param: `reg2` (float): Margin relaxation parameter 2
-
-    Return:
-        - :param: `(P, R, F)`: each is of shape (N); N = number of input
-                  candidate reference pairs
+    - model_name: model name of bert model (e.g. bert-uncased-base, roberta-large)
     """
-    assert len(cands) == len(refs)
-
-    assert lang is not None or model_type is not None, \
-        'Either lang or model_type should be specified'
-
-    if model_type is None:
-        lang = lang.lower()
-        model_type = lang2model[lang]
-    if num_layers is None:
-        num_layers = model2layers[model_type]
-
-
-    if model_type.startswith('scibert'):
-        tokenizer = AutoTokenizer.from_pretrained(cache_scibert(model_type))
-    else:
-        tokenizer = AutoTokenizer.from_pretrained(model_type)
-    model = get_model(model_type, num_layers, all_layers)
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model.to(device)
-
-    if not idf:
-        idf_dict = defaultdict(lambda: 1.)
-        # set idf for [SEP] and [CLS] to 0
-        idf_dict[tokenizer.sep_token_id] = 0
-        idf_dict[tokenizer.cls_token_id] = 0
-    elif isinstance(idf, dict):
-        if verbose:
-            print('using predefined IDF dict...')
-        idf_dict = idf
-    else:
-        if verbose:
-            print('preparing IDF dict...')
-        start = time.perf_counter()
-        idf_dict = get_idf_dict(refs, tokenizer, nthreads=nthreads)
-        if verbose:
-            print('done in {:.2f} seconds'.format(time.perf_counter() - start))
-
-    # if verbose:
-    #     print('calculating scores...')
-    start = time.perf_counter()
-    all_preds = bert_cos_score_idf(model, refs, cands, tokenizer, idf_dict,
-                                   epsilon, reg1, reg2,
-                                   verbose=verbose, device=device,
-                                   batch_size=batch_size, lemd=lemd, all_layers=all_layers)
-    if verbose:
-        time_diff = time.perf_counter() - start
-        print(f'done in {time_diff:.2f} seconds, {len(refs) / time_diff:.2f} sentences/sec')
-    
-    if lemd:
-        return all_preds
-    else:
-        P = all_preds[..., 0].cpu()
-        R = all_preds[..., 1].cpu()
-        F1 = all_preds[..., 2].cpu()
-        if return_hash:
-            return (P, R, F1), get_hash(model_type, num_layers, idf)
+    def __init__(self, model_name):
+        self.model_name = model_name
+        num_layers = model2layers[self.model_name]
+        self.bert_model = get_model(self.model_name, num_layers)
+        if model_name.startswith("scibert"):
+            self.tokenizer = AutoTokenizer.from_pretrained(cache_scibert(self.model_name))
         else:
-            return P, R, F1
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, use_fast=False)
 
+    def get_sim(self, ref_sent: List[str], cand_sents: List[List[str]]):
+        ref_token_ids = sent_encode(self.tokenizer, ref_sent)
+        cands_ids = [sent_encode(self.tokenizer, cand_sent) for cand_sent in cand_sents]
+        r_tokens = [self.tokenizer.decode([i]) for i in ref_token_ids]
+        c_tokens_list = []
+        """ get tokens"""
+        for cand in cands_ids:
+            c_tokens = [self.tokenizer.decode([i]) for i in cand]
+            c_tokens_list.append(c_tokens)
+        """ generate similarity matrix"""
+        ref_embedding = bert_encode(self.bert_model, torch.tensor([ref_token_ids]), attention_mask = torch.ones((1, len(ref_token_ids))))[0]
+        ref_embedding.div_(torch.norm(ref_embedding, dim=-1).unsqueeze(-1))
+        sim_list = []
+        cand_embeddings = []
+        for cand in cands_ids:
+            cand_embedding = bert_encode(self.bert_model, torch.tensor([cand]), attention_mask = torch.ones((1, len(cand))))[0]
+            cand_embedding.div_(torch.norm(cand_embedding, dim=-1).unsqueeze(-1))
+            sim = torch.mm(cand_embedding, ref_embedding.transpose(1, 0))
+            sim_list.append(sim)
+            cand_embeddings.append(cand_embedding) 
+        return r_tokens, c_tokens_list, sim_list
 
-def plot_example(candidate, reference, model_type=None, lang=None, num_layers=None, fname=''):
-    """
-    BERTScore metric.
+    def score(self, method, sim_list, *args, **kwargs):
+        if method == 'bertscore':
+            score_func = self._bertscore
+        elif method == 'wmd':
+            score_func = self._wmd
+        elif method == 'lazyemd':
+            score_func = self._lazy_emd
+        else:
+            raise NotImplementedError("{} is not implemented".format(method))
 
-    Args:
-        - :param: `candidate` (str): a candidate sentence
-        - :param: `reference` (str): a reference sentence
-        - :param: `verbose` (bool): turn on intermediate status update
-        - :param: `model_type` (str): bert specification, default using the suggested
-                  model for the target langauge; has to specify at least one of
-                  `model_type` or `lang`
-        - :param: `lang` (str): language of the sentences; has to specify 
-                  at least one of `model_type` or `lang`
-        - :param: `num_layers` (int): the layer of representation to use
-    """
-    assert isinstance(candidate, str)
-    assert isinstance(reference, str)
+        return score_func(sim_list, *args, **kwargs)
 
-    assert lang is not None or model_type is not None, \
-        'Either lang or model_type should be specified'
+    def _bertscore(self, sim_list):
+        p_score_list = []
+        r_score_list = []
+        p_w_list = []
+        r_w_list = []
+        for sim in sim_list:
+            word_precision, p_weight = sim.max(dim=1)
+            word_recall, r_weight = sim.max(dim=0)
+            p_score = word_precision[1:-1].sum() / (len(word_precision) - 2.)
+            r_score = word_recall[1:-1].sum() / (len(word_recall) - 2.)
+            p_score_list.append(p_score.cpu().item())
+            r_score_list.append(r_score.cpu().item())
+            p_w_list.append((get_weight_mat(p_weight, len(r_weight))).tolist())
+            r_w_list.append((get_weight_mat(r_weight, len(p_weight)).T).tolist())
+        return p_score_list, r_score_list, p_w_list, r_w_list
+    
+    def _wmd(self, sim_list):
+        score_list = []
+        w_mat_list = []
+        for sim in sim_list:
+            [cand_len, ref_len] = sim.shape
+            cand_w = get_uniform_weight(cand_len)
+            ref_w = get_uniform_weight(ref_len)
+            cost = (1. - sim).cpu().numpy()
+            P = ot.emd(cand_w, ref_w, cost)
+            score_list.append(float(np.sum(P * cost)))
+            w_mat_list.append(P[1:-1,1:-1].tolist())
+        return score_list, w_mat_list
+    
+    def _lazy_emd(self, sim_list, reg_c, reg_r):
+        epsilon = 0.009
+        score_list = []
+        w_mat_list = []
+        for sim in sim_list:
+            [cand_len, ref_len] = sim.shape
+            cand_w = get_uniform_weight(cand_len)
+            ref_w = get_uniform_weight(ref_len)
+            cost = (1. - sim).cpu().numpy()
+            P = unbalanced.sinkhorn_unbalanced(cand_w, ref_w, cost, epsilon, reg_c, reg_r, method='sinkhorn', verbose=False, numItermax=200000)
+            score_list.append(float(np.sum(P * cost)))
+            w_mat_list.append(P[1:-1,1:-1].tolist())
+        return score_list, w_mat_list
 
-    if model_type is None:
-        lang = lang.lower()
-        model_type = lang2model[lang]
-    if num_layers is None:
-        num_layers = model2layers[model_type]
-
-    assert model_type in model_types
-    if model_type.startswith('scibert'):
-        tokenizer = AutoTokenizer.from_pretrained(cache_scibert(model_type))
-    else:
-        tokenizer = AutoTokenizer.from_pretrained(model_type)
-    model = get_model(model_type, num_layers)
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model.to(device)
-
-    idf_dict = defaultdict(lambda: 1.)
-    # set idf for [SEP] and [CLS] to 0
-    idf_dict[tokenizer.sep_token_id] = 0
-    idf_dict[tokenizer.cls_token_id] = 0
-
-    hyp_embedding, masks, padded_idf = get_bert_embedding([candidate], model, tokenizer, idf_dict,
-                                                         device=device, all_layers=False)
-    ref_embedding, masks, padded_idf = get_bert_embedding([reference], model, tokenizer, idf_dict,
-                                                         device=device, all_layers=False)
-    ref_embedding.div_(torch.norm(ref_embedding, dim=-1).unsqueeze(-1))
-    hyp_embedding.div_(torch.norm(hyp_embedding, dim=-1).unsqueeze(-1))
-    sim = torch.bmm(hyp_embedding, ref_embedding.transpose(1, 2))
-    sim = sim.squeeze(0).cpu()
-
-    # remove [CLS] and [SEP] tokens 
-    r_tokens = [tokenizer.decode([i]) for i in sent_encode(tokenizer, reference)][1:-1]
-    h_tokens = [tokenizer.decode([i]) for i in sent_encode(tokenizer, candidate)][1:-1]
-    sim = sim[1:-1,1:-1]
-
-    fig, ax = plt.subplots(figsize=(len(r_tokens)*0.8, len(h_tokens)*0.8))
-    im = ax.imshow(sim, cmap='Blues')
-
-    # We want to show all ticks...
-    ax.set_xticks(np.arange(len(r_tokens)))
-    ax.set_yticks(np.arange(len(h_tokens)))
-    # ... and label them with the respective list entries
-    ax.set_xticklabels(r_tokens, fontsize=10)
-    ax.set_yticklabels(h_tokens, fontsize=10)
-    plt.xlabel("Refernce (tokenized)", fontsize=14)
-    plt.ylabel("Candidate (tokenized)", fontsize=14)
-    plt.title("Similarity Matrix", fontsize=14)
-
-    # Rotate the tick labels and set their alignment.
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right",
-             rotation_mode="anchor")
-
-    # Loop over data dimensions and create text annotations.
-    for i in range(len(h_tokens)):
-        for j in range(len(r_tokens)):
-            text = ax.text(j, i, '{:.3f}'.format(sim[i, j].item()),
-                           ha="center", va="center", color="k" if sim[i, j].item() < 0.6 else "w")
-
-    fig.tight_layout()
-    if fname != "":
-        print("Saved figure to file: ", fname)
-        plt.savefig(fname, dpi=100)
-    plt.show()
+if __name__ == '__main__':
+#     model_name = 'roberta-large'
+    model_name = 'bert-base-uncased'
+    ref_sent = 'A dog runs in the grass.' 
+    cand_sents = ['A boy runs in the grass.', 'A dog is running in the grass.']
+    scorer = Scorer(model_name)
+    r_tokens, c_tokens_list, sim_list = scorer.get_sim(ref_sent, cand_sents). # tokenize sentences and get similarity matrix
+    bert_scores = scorer.score('bertscore', sim_list).  # calculate bert score
+    print(bert_scores[0])
+    print(bert_scores[1])
+    print(bert_scores[2])
+    print(bert_scores[3])
+    p = np.array(bert_scores[0])
+    r = np.array(bert_scores[1])
+    print("bert-f: ", 2*p*r/(p+r))
+    print(scorer.score('wmd', sim_list)[0]) # calucate wmd 
+    print(scorer.score('lazyemd', sim_list, reg_c=0.23, reg_r=0.31)[0]) # calculate our proposed lazy_emd
