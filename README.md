@@ -2,7 +2,7 @@
 This repository contains a primary implementation of the Lazy Earth Mover's Distance (Lazy EMD).
 
 ## Demo
-Our demo is on http://ijcai.ruibinxiong.cn, please use Chrome (others, e.g. Safari may encounter problems.) It may take a long time (> 15s) to open the website and submit the first example, thanks for your patience! 
+Our demo is on http://ijcai.ruibinxiong.cn, please use Chrome (others, e.g. Safari may encounter problems.) It may take a bit long time (> 15s) to open the website and submit the first example, thanks for your patience! 
 
 ## Requirements
 - python (==3.x)
@@ -10,8 +10,7 @@ Our demo is on http://ijcai.ruibinxiong.cn, please use Chrome (others, e.g. Safa
 - POT (>=0.6.0)
 
 ## Usage
-The simplest way is to copy `score.py` and `utils.py` to your `bert_score` file, `unbalanced.py` to your `ot` file.
-The usage is then similar to BERTScore. See `example.py` for an example.
+Download our project and use our Scorer class (implemented bertscore, wmd and our proposed lazy_emd) defined in `score.py`. An example is in `score.py`. 
 
 If you find this repo useful, please cite:
 ```
