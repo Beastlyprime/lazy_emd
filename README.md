@@ -1,9 +1,6 @@
 # Lazy EMD
 This repository contains a primary implementation of the Lazy Earth Mover's Distance (Lazy EMD).
 
-## Demo
-Our demo is on http://ijcai.ruibinxiong.cn, please use Chrome (others, e.g. Safari may encounter problems.) It may take a bit long time (> 15s) to open the website and submit the first example, thanks for your patience! 
-
 ## Requirements
 - python (==3.x)
 - bert_score (>=0.2.2)
